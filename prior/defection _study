@@ -1,0 +1,432 @@
+create table secure_ws.kc2177 as
+select surv_mark_cust_iden, auth_id, tax_year, product_type_name, product_short_name
+from consumer_dm.vw_mktg_customer_order_ranked
+where tax_year in ('2020', '2019', '2018', '2017', '2016')
+
+select * from secure_ws.kc2177 limit 10;
+select distinct tax_year, count(*) from secure_ws.kc2177 group by 1;
+select count(*) from secure_ws.kc2177  --190044135
+select count(distinct auth_id) from secure_ws.kc2177  --65064409
+
+-----------------------------------------------------------------------------------------------------------------------------------------------
+--USED Query 1: 
+drop table secure_ws.kc2177a;
+create table secure_ws.kc2177a as
+select a.*,
+   (case when ty19 = 2019  and ty20 is null and ty18 is null and ty17 is null and ty16 is null then 'new'
+         when ty19 = 2019   and ty20 is null and (ty18  = 2018 or ty17 = 2017 or ty16 =2016 ) then 'vet'
+         else 'na' 
+         end) as 'new_vet'
+from
+(
+select ty19.surv_mark_cust_iden, ty19.auth_id, ty19.tax_year, ty19.product_type_name, ty19.product_short_name,
+       ty19.tax_year as ty19,
+       ty20.tax_year as  ty20,
+       ty18.tax_year as  ty18, 
+       ty17.tax_year as  ty17, 
+       ty16.tax_year as  ty16
+from secure_ws.kc2177  as ty19 
+   left join (select *
+              from secure_ws.kc2177
+              where tax_year = 2020) as ty20 on ty19.surv_mark_cust_iden = ty20.surv_mark_cust_iden
+   left join (select *
+             from secure_ws.kc2177
+            where tax_year = 2018) as ty18 on ty19.surv_mark_cust_iden = ty18.surv_mark_cust_iden
+    left join (select *
+                from secure_ws.kc2177
+                where tax_year = 2017) as ty17 on ty19.surv_mark_cust_iden = ty17.surv_mark_cust_iden
+    left join (select *
+                from secure_ws.kc2177
+                where tax_year = 2016) as ty16 on ty19.surv_mark_cust_iden = ty16.surv_mark_cust_iden
+where ty19.tax_year = 2019 ) as a;
+
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+--Query 2 Option to keep 2020 out - did not use but works
+drop table ctg_analytics_ws.cv_new_vet
+create table ctg_analytics_ws.cv_new_vet as
+select a.*,
+   (case when ty19 = 2019  and ty18 is null and ty17 is null and ty16 is null then 'new'
+         when ty19 = 2019  and (ty18  = 2018 or ty17 = 2017 or ty16 =2016 ) then 'vet'
+         else 'na' 
+         end) as 'new_vet'
+from
+(
+select ty19.surv_mark_cust_iden,
+       ty19.tax_year as ty19,
+       ty18.tax_year as  ty18, 
+       ty17.tax_year as  ty17, 
+       ty16.tax_year as  ty16
+from secure_ws.kc2177  as ty19 
+   left join (select *
+             from secure_ws.kc2177
+            where tax_year = 2018) as ty18 on ty19.surv_mark_cust_iden = ty18.surv_mark_cust_iden
+    left join (select *
+                from secure_ws.kc2177
+                where tax_year = 2017) as ty17 on ty19.surv_mark_cust_iden = ty17.surv_mark_cust_iden
+    left join (select *
+                from secure_ws.kc2177
+                where tax_year = 2016) as ty16 on ty19.surv_mark_cust_iden = ty16.surv_mark_cust_iden
+where ty19.tax_year = 2019 
+and not in (select distinct surv_mark_cust_iden   from secure_ws.kc2177  where tax_year = 2020 )
+    ) as a;
+
+select ty20, ty19, ty18, ty17, ty16, new_vet, count(*) from ctg_analytics_ws.cv_new_vet group by 1,2,3,4,5,6
+select * from ctg_analytics_ws.cv_new_vet limit 10;
+select ty20, ty19, ty18, ty17, ty16, new_vet, count(*) from secure_ws.kc2177a group by 1,2,3,4,5,6
+select * from secure_ws.kc2177a limit 10;   
+select distinct product_short_name from secure_ws.kc2177a 
+    
+---------------------------------------------------------------------------------------------------------------------------------    
+--pull new_vet and skus
+---------------------------------------------------------------------------------------------------------------------------------    
+drop table secure_ws.kc2177b;
+create table secure_ws.kc2177b as
+select * from secure_ws.kc2177a
+where new_vet in ('new','vet')
+and product_short_name in (
+'TTWeb Dlx',
+'TTWeb Prem',
+'TTWeb Self-Employed',
+'TTWeb Live Basic',
+'TTWeb Live Deluxe',
+'TTWeb Live Premier',
+'TTWeb Live SE',
+'TTWeb Fed Free NFFA');
+
+select * from secure_ws.kc2177b limit 10
+select new_vet, count(distinct auth_id) from secure_ws.kc2177b group by 1;
+select count(*) from secure_ws.kc2177b;  --8943484
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--ADD PSEUDONYM_ID
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177c;
+create table secure_ws.kc2177c as
+select a.*, b.pseudonym_id, b.completed_sku
+from secure_ws.kc2177b as a inner join (select * from tax_rpt.product_analytics_master_vw where tax_year = 2019) as b
+on a.auth_id = b.auth_id;
+
+select count(*) from secure_ws.kc2177c;                                                   --8182602
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177c;                        --8164042
+select count(distinct pseudonym_id) from secure_ws.kc2177c;                               --8164002
+select completed_sku, product_short_name, count(*) from  secure_ws.kc2177c group by 1,2;         
+
+
+---------------------------------------------------------------------------------------------------------------------------------    
+--completed_sku and product_short_name match
+---------------------------------------------------------------------------------------------------------------------------------    
+drop table secure_ws.kc2177d;
+create table secure_ws.kc2177d as
+select * from secure_ws.kc2177c
+where completed_sku = '200|Free TTO'          and product_short_name = 'TTWeb Fed Free NFFA'
+or   completed_sku = '600|Paid Deluxe'        and product_short_name = 'TTWeb Dlx'
+or   completed_sku = '800|Paid Premier'       and product_short_name = 'TTWeb Prem'
+or   completed_sku = '850|Paid Self Employed' and product_short_name = 'TTWeb Self-Employed'
+or   completed_sku = '910|Paid TTL Basic'     and product_short_name = 'TTWeb Live Basic'
+or   completed_sku = '920|Paid TTL Deluxe'    and product_short_name = 'TTWeb Live Deluxe'
+or   completed_sku = '930|Paid TTL Premier'   and product_short_name = 'TTWeb Live Premier'
+or   completed_sku = '940|Paid TTL SE'        and product_short_name = 'TTWeb Live SE'
+
+select completed_sku, product_short_name, count(*) from secure_ws.kc2177d group by 1,2
+select count(*) from secure_ws.kc2177d                               --8,099,875
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177d    --8081365
+select count(distinct auth_id) from secure_ws.kc2177d                --8081365
+select count(distinct pseudonym_id ) from secure_ws.kc2177d          --8081328
+select count(*) from secure_ws.kc2177d where pseudonym_id is null;   --     37
+
+---------------------------------------------------------------------------------------------------------------------------------    
+--add email
+---------------------------------------------------------------------------------------------------------------------------------    
+drop table secure_ws.kc2177e;
+create table secure_ws.kc2177e as 
+select a.surv_mark_cust_iden
+, a.auth_id
+, a.pseudonym_id
+, a.completed_sku
+, a.tax_year
+, a.product_type_name
+, a.product_short_name
+, a.new_vet
+, b.email_address
+, c.mark_cust_iden_adj
+, d.lower_email as cv_email
+from secure_ws.kc2177d as a   
+ inner join matt_comp_dwh.customer_account as b
+    on a.auth_id = b.auth_id 
+  left join (select distinct mark_cust_iden_adj, auth_id_adj from consumer_dm.fact_marketing_turbotax_orders 
+    where trim(email_v) = trim(email_cv)) as c 
+    on a.auth_id = c.auth_id_adj                 
+  left join consumer_dm.helper_cv_get_pii as d
+    on c.mark_cust_iden_adj = d.mark_cust_iden
+group by 1,2,3,4,5,6,7,8,9,10,11;    
+select analyze_statistics ('secure_ws.kc2177e');
+
+select * from secure_ws.kc2177e limit 100;
+select count(*) from secure_ws.kc2177e;                             --8,237,916
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177e;  --8081365
+select count(distinct auth_id) from secure_ws.kc2177e;              --8081365
+select count(distinct pseudonym_id) from secure_ws.kc2177e;         --8081328
+select count(distinct email_address) from secure_ws.kc2177e;        --7970778
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------    
+--remove where cv and matt email address do not match
+-------------------------------------------------------------------------------------------------------------------------------------------------------    
+drop table secure_ws.kc2177f;
+create table secure_ws.kc2177f as 
+select * from secure_ws.kc2177e 
+where email_address = cv_email
+and pseudonym_id is not null;
+
+select * from secure_ws.kc2177f limit 10;
+select count(*) from secure_ws.kc2177f;                             --7169213
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177f;  --7022186
+select count(distinct auth_id) from secure_ws.kc2177f;              --7022186
+select count(distinct pseudonym_id) from secure_ws.kc2177f;         --7022186
+select count(distinct email_address) from secure_ws.kc2177f;        --6933812
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--REMOVE Authenticate email address
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177g;
+create table secure_ws.kc2177g as
+select * from secure_ws.kc2177f where email_address not ilike 'authenticate%';
+
+select count(*) from secure_ws.kc2177g;  --7169213
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+-- EMAIL SUPPRESSIONS
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177emsupp;
+create table secure_ws.kc2177emsupp as
+ select  lower(email_validation.email_address) as lower_email
+        from    matt_comp_dwh.email_validation
+        where   email_validation.validation_status = 'INVALID'
+        and     email_validation.validation_date > '2016-12-01 00:00:00':: timestamp
+        UNION ALL
+        -- test records
+        select  lower(ca.email_address) as lower_email
+        from    matt_comp_dwh.customer_account ca
+                join matt_dwh.tto_test_records tr on ca.auth_id = tr.auth_id
+        UNION ALL
+        -- standard suppression for cust_account tbl
+        select  lower(customer_account.email_address) as lower_email
+        from    matt_comp_dwh.customer_account
+        where   lower(customer_account.email_address) ~~ '%ttoperf%'
+        or      lower(customer_account.email_address) ~~ '%test.qbn.intuit.com%'
+        or      lower(customer_account.email_address) ~~ '%iamtestpass%'
+        or      lower(customer_account.email_address) ~~ '%delayedauthuser%'
+        or      lower(customer_account.email_address) ~~ '%test@email.com%'
+        or      lower(customer_account.email_address) ~~ '%martini_automation%'
+        or      lower(customer_account.email_address) ~~ '%noemail.com%'
+        or      lower(customer_account.email_address) ~~ '%ebstestuser%'
+        or      lower(customer_account.email_address) ~~ '%ctgsiteops%'
+        or      lower(customer_account.email_address) ~~ '%example.com'
+        UNION ALL
+        -- ty19 DT deceased flag from Experian
+        select  lower_email
+        from    tax_secure_published.ty20_DT_deceased_flag 
+ 
+   
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--MERGE authenticate and supp
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177suppdrop;
+create table secure_ws.kc2177suppdrop as
+select a.*, b.lower_email 
+from secure_ws.kc2177g as a left join secure_ws.kc2177emsupp as b
+on a.email_address = b.lower_email;
+
+select count(*) from secure_ws.kc2177suppdrop where lower_email is not null; --3741
+select count(*) from secure_ws.kc2177suppdrop where lower_email is null;     --7166082
+select * from secure_ws.kc2177suppdrop limit 10;
+select count(*) from secure_ws.kc2177suppdrop;                               --7169823
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177suppdrop;    --7022186
+select count(distinct pseudonym_id) from secure_ws.kc2177suppdrop;           --7022186
+select count(distinct email_address) from secure_ws.kc2177suppdrop;          --6933812
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--REMOVE SUPPRESSIONS
+--SELECT LOWER_EMAIL NULL
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177suppdropa;
+create table secure_ws.kc2177suppdropa as
+select *
+from secure_ws.kc2177suppdrop where lower_email is null;
+
+select * from secure_ws.kc2177suppdropa limit 10;
+select count(*) from secure_ws.kc2177suppdropa;                                 --7166082
+select count(*) from secure_ws.kc2177suppdropa where lower_email is not null;   --0
+select count(*) from secure_ws.kc2177suppdropa where lower_email is null;       --7166082
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177suppdropa;      --7019128
+select count(distinct pseudonym_id) from secure_ws.kc2177suppdropa;             --7019128
+select count(distinct email_address) from secure_ws.kc2177suppdropa;            --6930869
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+-- GPC USED 6/03/2021
+------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177_gpc;
+create table secure_ws.kc2177_gpc as
+select * from secure_ws.kc2177suppdropa d
+left join (select
+distinct ownerid, consented 
+from consumer_source.src_gpc_ctodev_consent_appevents
+where ownertype = 'EMAIL'
+and purpose in ('/marketing-notifications/*', '/marketing-notifications/research-USTT')
+and consenttype = 'marketing-preferences'
+and productregion = 'US'
+and applicationid in ('3748138382259460994', '8431881994700604519')
+and consented = 'false') v
+on d.email_address = v.ownerid;
+
+select * from secure_ws.kc2177_gpc limit 10;
+select count(*) from secure_ws.kc2177_gpc;                                                      --7166082
+select count(*) from secure_ws.kc2177_gpc where consented is null;                              --6653310 
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177_gpc where consented is null;   --6518047
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177_gpc where consented = 'false'; --501081
+select count(pseudonym_id) from secure_ws.kc2177_gpc;                                           --7166082 
+select count(distinct email_address) from secure_ws.kc2177_gpc where consented is null;         --6436515
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--REMOVE OPT OUTS  - EMAIL OPT OUTS
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177_scrubbed;
+create table secure_ws.kc2177_scrubbed as
+select * from secure_ws.kc2177_gpc where consented is null;
+
+select * from secure_ws.kc2177_scrubbed limit 10;
+select count(*) from secure_ws.kc2177_scrubbed;                                  --6653310
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177_scrubbed;       --6518047
+select count(distinct pseudonym_id) from secure_ws.kc2177_scrubbed;              --6518047
+select count(distinct email_address) from secure_ws.kc2177_scrubbed;             --6436515
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--DEDUPE BY EMAIL ADDRESS 
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177h;
+create table secure_ws.kc2177h as
+select pseudonym_id, surv_mark_cust_iden, auth_id, tax_year, completed_sku, product_type_name, product_short_name, new_vet, email_address
+from (select a.*, row_number () over (partition by email_address) as row from secure_ws.kc2177_scrubbed as a) as b 
+where row = 1;
+
+select * from secure_ws.kc2177h limit 10;
+select count(*) from secure_ws.kc2177h                              --6436515
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177h   --6436515
+select count(distinct email_address) from secure_ws.kc2177h         --6436515
+select count(distinct auth_id) from secure_ws.kc2177h               --6436515
+select completed_sku, product_short_name from secure_ws.kc2177h group by 1,2
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--LISTS
+--------------------------------------------------------------------------------------------------------------------------------------------------------    
+drop table secure_ws.kc2177i;
+create table secure_ws.kc2177i as
+select *,
+(case when new_vet = 'new' and product_short_name = 'TTWeb Fed Free NFFA' then '001'
+      when new_vet = 'vet' and product_short_name = 'TTWeb Fed Free NFFA' then '002'
+      when new_vet = 'new' and product_short_name in ('TTWeb Dlx', 'TTWeb Prem', 'TTWeb Self-Employed') then '003'
+      when new_vet = 'vet' and product_short_name in ('TTWeb Dlx', 'TTWeb Prem', 'TTWeb Self-Employed') then '004'
+      when new_vet = 'new' and product_short_name in ('TTWeb Live Basic', 'TTWeb Live Deluxe', 'TTWeb Live Premier', 'TTWeb Live SE') then '005'
+      when new_vet = 'vet' and product_short_name in ('TTWeb Live Basic', 'TTWeb Live Deluxe', 'TTWeb Live Premier', 'TTWeb Live SE') then '006'
+      else 'na' end) as 'list'
+from secure_ws.kc2177h;      
+
+select * from secure_ws.kc2177i limit 10    
+select count(*) from secure_ws.kc2177i;                             --6436515
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177i;  --6436515
+select count(distinct auth_id) from secure_ws.kc2177i;              --6436515
+select count(distinct pseudonym_id) from secure_ws.kc2177i;         --6436515
+select new_vet, product_short_name, list, count(*) from secure_ws.kc2177i group by 1,2,3;
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--RANDOM 
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177_1;
+create table secure_ws.kc2177_1 as
+select * from secure_ws.kc2177i where list = '001' order by RANDOM() limit 300000;
+
+drop table secure_ws.kc2177_2;
+create table secure_ws.kc2177_2 as
+select * from secure_ws.kc2177i where list = '002' order by RANDOM() limit 300000;
+
+drop table secure_ws.kc2177_3;
+create table secure_ws.kc2177_3 as
+select * from secure_ws.kc2177i where list = '003' order by RANDOM() limit 300000;
+
+drop table secure_ws.kc2177_4;
+create table secure_ws.kc2177_4 as
+select * from secure_ws.kc2177i where list = '004' order by RANDOM() limit 300000;
+
+drop table secure_ws.kc2177_5;
+create table secure_ws.kc2177_5 as
+select * from secure_ws.kc2177i where list = '005' order by RANDOM() limit 300000;
+
+drop table secure_ws.kc2177_6;
+create table secure_ws.kc2177_6 as
+select * from secure_ws.kc2177i where list = '006' order by RANDOM() limit 300000;
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--join
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177j;
+create table secure_ws.kc2177j as
+select * from secure_ws.kc2177_1
+union all
+select * from secure_ws.kc2177_2
+union all
+select * from secure_ws.kc2177_3
+union all
+select * from secure_ws.kc2177_4
+union all
+select * from secure_ws.kc2177_5
+union all
+select * from secure_ws.kc2177_6;
+
+select * from secure_ws.kc2177j limit 10;
+select count(*) from secure_ws.kc2177j                              --1654131
+select count(distinct surv_mark_cust_iden) from secure_ws.kc2177j   --1654131
+select count(distinct auth_id) from secure_ws.kc2177j               --1654131
+select count(distinct pseudonym_id) from secure_ws.kc2177j          --1654131
+select count(distinct email_address) from secure_ws.kc2177j         --1654131
+select count(*) from secure_ws.kc2177j where email_address is null;
+select list, product_short_name, new_vet, count(*) from secure_ws.kc2177j group by 1,2,3;
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--create final file
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table secure_ws.kc2177final;
+create table secure_ws.kc2177final as
+select email_address, product_short_name as description_1, list as description_2, pseudonym_id as descripiton_3
+from secure_ws.kc2177j;
+
+select count(*) from secure_ws.kc2177final;  --1654131
+
+ALTER TABLE secure_ws.kc2177final ADD cmc_id varchar(5);
+UPDATE secure_ws.kc2177final SET cmc_id = 'xxxxx';
+
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+--export file
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+@export ON;
+@export SET Format="CSV"
+CsvColumnDelimiter=","
+CsvRowDelimiter="\r\n";               
+
+     --actives        
+     @export set filename = "C:\Users\kcornejo\Box\a Market Research\TY20\2177 Defection Study TY19\2177_output.csv";
+     select * from secure_ws.kc2177final;
+
+@export off; 
+
+
