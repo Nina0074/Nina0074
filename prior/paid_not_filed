@@ -1,0 +1,380 @@
+-------------------------------------------------------------------------------------------------------------------------------------
+--CLICKSTREAM
+-------------------------------------------------------------------------------------------------------------------------------------
+drop table if exists cgan_ustax_ws.tmp_product_analytics_master_ytd_vw;
+create table if not exists cgan_ustax_ws.tmp_product_analytics_master_ytd_vw as
+SELECT *
+   FROM tax_rpt.product_analytics_master_ytd_vw;
+   
+-------------------------------------------------------------------------------------------------------------------------------------
+--CLICKSTREAM
+-------------------------------------------------------------------------------------------------------------------------------------
+drop table if exists cgan_ustax_ws.temp_clickstream_help;
+create table if not exists cgan_ustax_ws.temp_clickstream_help as
+SELECT properties_pseudonym_id as pseudonym_id,
+          min("timestamp") AS first_print_to_mail_date
+   FROM bud_clickstream_dwh.ecs_clickstream_turbotax_ty2020 -- 46 B rows
+   WHERE (properties_screen in ('print-mail-all-final',
+                     'print-center-all-final',
+                     'print-mail-some-final',
+                     'print-center-some-final',
+                     'print-mail-all-final-last-chance') 
+   and properties_ui_object_detail in 
+                     ('print-center-print-button','print-mail-view-print-button','print-mail-print'))                      
+     AND try(cast("timestamp" as date)) <= current_date - interval '1' day
+   GROUP BY 1;
+-- 2,720,275 rows, 11 min
+
+
+
+drop table if exists cgan_ustax_ws.temp_revenue_defer_print_master_auth_TY20_SEG_11_t;                  --UPDATE
+create table if not exists cgan_ustax_ws.temp_revenue_defer_print_master_auth_TY20_SEG_11_t as          --UPDATE
+SELECT 2020 AS tax_year
+  , pseudonym_id
+  , first_print_to_mail_date
+  , b.reporting_date as fnf_n_printcenter_print_date_adj
+FROM cgan_ustax_ws.temp_clickstream_help a 
+inner join common_dm.dim_cg_date b 
+on b.tax_utc_date_id = cast(try(date_format(first_print_to_mail_date,'%Y%m%d%h')) as int);
+
+drop table if exists cgan_ustax_ws.temp_clickstream_help;
+
+
+--------------------------------------------------------------------------------------------------------------------------------
+--------APPEND AUTH_ID to CLICKSTREAM DATA--------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------------
+drop table if exists cgan_ustax_ws.temp_revenue_defer_print_master_t;
+create table if not exists cgan_ustax_ws.temp_revenue_defer_print_master_t as
+select a.tax_year
+  , a.pseudonym_id
+  , a.first_print_to_mail_date
+  , a.fnf_n_printcenter_print_date_adj
+  , b.accountid as auth_id
+from cgan_ustax_ws.temp_revenue_defer_print_master_auth_TY20_SEG_10_t as a 
+  left join intuit_identity_lifecycle_dwh.person_profile as b
+  on a.pseudonym_id = b.pseudonymid
+  and legacyidentitytype <>'2';
+  
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------
+--------CREATE OFFICIAL OFFICIAL Table
+-------------------------------------------------------------------------------------------------------------------------------------------------
+--this table was copied over from Vertica:
+--cgan_ustax_published.revenue_defer_master_ty20_official_10;
+drop table if exists cgan_ustax_ws.revenue_defer_master_ty20_official_11;                                     --UPDATE
+create table if not exists cgan_ustax_ws.revenue_defer_master_ty20_official_11 as                             --UPDATE 
+select * from cgan_ustax_published.revenue_defer_master_ty20_official_10_final;                               --UPDATE
+             
+
+/************* COPY PASTE below and include in SQL tab in accounting export spreadsheet ************/
+--Step 1: update existing records in master table
+--update print dates   
+
+drop table if exists cgan_ustax_ws.temp_1revenue_defer_master_ty20_official_11;                               --UPDATE
+create table if not exists cgan_ustax_ws.temp_1revenue_defer_master_ty20_official_11                          --UPDATE
+as
+select
+batch_flag          
+, a.auth_id             
+, a.first_completed_date
+, a.first_completed_date_adj
+, a.first_fed_efile_attempted_date
+, a.first_fed_efile_attempted_date_adj
+, case when cast(a.auth_id as varchar) = b.auth_id and cast(a.tax_year as bigint) = b.tax_year then cast(b.first_print_to_mail_date as timestamp)
+  else cast(a.fnf_n_printcenter_print_date as timestamp)
+  end as fnf_n_printcenter_print_date
+, case when cast(a.auth_id as varchar) = b.auth_id and cast(a.tax_year as bigint) = b.tax_year then cast(b.fnf_n_printcenter_print_date_adj as date)
+  else cast(a.fnf_n_printcenter_print_date_adj as date)
+  end as fnf_n_printcenter_print_date_adj
+, a.order_number        
+, a.order_created_date  
+, a.first_state1_efile_attempted_date
+, a.first_state1_efile_attempted_date_adj
+, cast(a.tax_year as bigint) as tax_year
+from cgan_ustax_ws.revenue_defer_master_ty20_official_11 a                                                      --UPDATE
+left join cgan_ustax_ws.temp_revenue_defer_print_master_t b
+on cast(a.auth_id as varchar) = b.auth_id
+    AND cast(a.tax_year as bigint) = b.tax_year
+;
+
+
+--update efile fed and state dates
+drop table if exists cgan_ustax_ws.temp_2revenue_defer_master_ty20_official_11;                                 --UPDATE
+create table if not exists cgan_ustax_ws.temp_2revenue_defer_master_ty20_official_11                            --UPDATE
+as
+select
+batch_flag          
+, a.auth_id             
+, a.first_completed_date
+, a.first_completed_date_adj
+, case when a.auth_id = b.auth_id AND a.tax_year = b.tax_year then b.first_fed_efile_attempted_date
+  else a.first_fed_efile_attempted_date
+  end as first_fed_efile_attempted_date
+, case when a.auth_id = b.auth_id AND a.tax_year = b.tax_year then b.first_fed_efile_attempted_date_adj
+  else a.first_fed_efile_attempted_date_adj
+  end as first_fed_efile_attempted_date_adj
+, a.fnf_n_printcenter_print_date
+, a.fnf_n_printcenter_print_date_adj
+, a.order_number        
+, a.order_created_date  
+, case when a.auth_id = b.auth_id AND a.tax_year = b.tax_year then b.first_state1_attempted_timestamp_adj
+  else a.first_state1_efile_attempted_date
+  end as first_state1_efile_attempted_date
+, case when a.auth_id = b.auth_id AND a.tax_year = b.tax_year then b.first_state1_attempted_timestamp_ADJ
+  else a.first_state1_efile_attempted_date_adj
+  end as first_state1_efile_attempted_date_adj
+, a.tax_year
+from cgan_ustax_ws.temp_1revenue_defer_master_ty20_official_11 a                                                  --UPDATE
+left join cgan_ustax_ws.tmp_product_analytics_master_ytd_vw b --tax_rpt.product_analytics_master
+on a.auth_id = b.auth_id
+    AND a.tax_year = b.tax_year
+;
+
+
+--Step 2: add v2 build base table using daily tabs order records: change the dates
+drop table if exists cgan_ustax_ws.temp_mam_auth;
+create table if not exists cgan_ustax_ws.temp_mam_auth
+as
+select auth_id
+from tax_rpt.monetization_analytics_master
+where tax_year = 2020
+  and TOTAL_REVENUE > 0
+  and RT_ATTACH_FLAG = 0
+  and TOTAL_REFUND_TRANSFER_REVENUE = 0
+;
+
+drop table if exists cgan_ustax_ws.temp_ext_auth;
+create table if not exists cgan_ustax_ws.temp_ext_auth
+as
+select auth_id
+from
+    (select sender_id as auth_id,
+        case when completed_date >= date('2020-12-01') then h.completed_flag else 0 end as completed_flag,
+        case when completed_date >= date('2020-12-01')  then h.efile_flag else 0 end as efile_flag
+    from tax_rpt.rpt_customer_extension_filings as h
+        where tax_year = 2020
+        and date(extension_date) >= date('2020-12-01') --filter on date
+        and ENGINE_CODE <> 'EASY-EXT') a
+where completed_flag = 1
+      and efile_flag = 0
+;
+
+
+
+drop table if exists cgan_ustax_ws.temp_print_auth;
+create table if not exists cgan_ustax_ws.temp_print_auth
+as
+select auth_id, min(FIRST_PRINT_TO_MAIL_DATE) as FIRST_PRINT_TO_MAIL_DATE
+from cgan_ustax_ws.temp_revenue_defer_print_master_t
+where cast(FIRST_PRINT_TO_MAIL_DATE as date) between date('2020-12-01') and date('2021-10-27')
+group by 1
+;
+
+
+
+drop table if exists cgan_ustax_ws.temp_tax_order;
+create table if not exists cgan_ustax_ws.temp_tax_order
+as
+select auth_id
+    ,order_number
+    ,ORDER_CREATED_DATE
+from
+    (select distinct auth_id
+          ,ORDER_NUMBER
+          ,min(order_TIMESTAMP) as ORDER_CREATED_DATE
+          ,row_number() over (partition by auth_id, order_number order by auth_id) as rn
+    from tax_dm.fact_taxorder
+      where tax_year = 2020
+          and substr(order_number,1,3) in ('TTW','TTU','EFE')
+      group by 1,2) a
+where rn = 1
+;
+
+
+
+insert into cgan_ustax_ws.temp_2revenue_defer_master_ty20_official_11 (                                      --UPDATE
+  tax_year, auth_id, first_completed_date
+     ,first_completed_date_adj
+     ,first_fed_efile_attempted_date
+     ,first_fed_efile_attempted_date_adj
+     ,fnf_n_printcenter_print_date
+     ,fnf_n_printcenter_print_date_adj
+     ,ORDER_NUMBER
+     ,ORDER_CREATED_DATE
+     ,first_state1_efile_attempted_date
+     ,first_state1_efile_attempted_date_adj
+     ,batch_flag
+)
+select cast(tax_year as bigint) as tax_year
+     ,auth_id
+     ,first_completed_date
+     ,date(first_completed_date_adj) as first_completed_date_adj
+     ,first_fed_efile_attempted_date
+     ,first_fed_efile_attempted_date_adj
+     ,fnf_n_printcenter_print_date
+     ,date(fnf_n_printcenter_print_date_adj) as fnf_n_printcenter_print_date_adj
+     ,ORDER_NUMBER
+     ,ORDER_CREATED_DATE
+     ,first_state1_efile_attempted_date
+     ,first_state1_efile_attempted_date_adj
+     ,batch_flag
+from
+(select 2020 as tax_year ,
+    '11/1 Official' as batch_flag      --CHANGE date if not run on the 1st of each month                              --UPDATE
+    ,m.auth_id
+    ,m.first_completed_date
+    ,m.first_completed_date_adj
+    ,m.first_fed_efile_attempted_date
+    ,m.first_fed_efile_attempted_date_adj
+    ,m.first_state1_efile_attempted_date
+    ,m.first_state1_efile_attempted_date_adj
+    ,m.fnf_n_printcenter_print_date
+    ,(select min(reporting_date) from common_dm.dim_cg_date
+      where tax_utc_date_id = cast(date_format(fnf_n_printcenter_print_date,'%Y%m%d%h') as int)) as fnf_n_printcenter_print_date_adj
+    ,ORDER_NUMBER
+    ,ORDER_CREATED_DATE
+from
+   (select c.auth_id
+    ,first_completed_date
+    ,first_completed_date_adj
+    ,first_fed_efile_attempted_date
+    ,first_fed_efile_attempted_date_adj
+    ,first_state1_efile_attempted_date
+    ,first_state1_efile_attempted_date_adj
+    ,with_print_center as fnf_n_printcenter_print_date
+    from
+          (select a.auth_id
+          ,first_completed_date
+          ,first_completed_date_adj
+          ,with_print_center
+          ,first_fed_efile_attempted_date
+          ,first_fed_efile_attempted_date_adj
+          ,first_state1_efile_attempted_date
+          ,first_state1_efile_attempted_date_adj
+          from
+                (select a.auth_id
+                    ,a.first_fed_efile_attempted_date
+                    ,a.first_fed_efile_attempted_date_adj
+                    ,a.first_state1_attempted_timestamp_ADJ as first_state1_efile_attempted_date
+                    ,a.first_state1_attempted_timestamp_ADJ as first_state1_efile_attempted_date_adj
+                    ,b.first_print_to_mail_date as with_print_center
+                    ,a.first_completed_date
+                    ,a.first_completed_date_adj
+                          from cgan_ustax_ws.tmp_product_analytics_master_ytd_vw a --tax_rpt.product_analytics_master_ytd_vw
+                          left join cgan_ustax_ws.tmp_product_analytics_master_ytd_vw pam2 --tax_rpt.product_analytics_master_ytd_vw
+                              ON a.tax_year = pam2.tax_year and a.auth_id = pam2.auth_id
+                          left join cgan_ustax_ws.temp_print_auth b
+                          on cast(a.auth_id as varchar) = b.auth_id
+                          where a.tax_year = 2020 and                                                                                           --TAX_YEAR
+                          (
+                            -- no fed efile as of end of period
+                            ((a.first_fed_efile_attempted_date_adj is null or date(a.first_fed_efile_attempted_date_adj) > date('2021-10-27'))
+                              and (b.FIRST_PRINT_TO_MAIL_DATE is null or date(b.FIRST_PRINT_TO_MAIL_DATE) > date('2021-10-27')) --update date
+                            ) or
+                            -- fed efile attempted but not state efile
+                            ( (date(a.first_fed_efile_attempted_date_adj) <= date('2021-10-27')) AND
+                              (a.first_state1_attempted_timestamp_ADJ is null OR date(a.first_state1_attempted_timestamp_ADJ) > date('2021-10-27')) AND
+                                pam2.num_state_attach > 0
+                            )
+                          )
+                          and a.nonffa_flag = 1
+                          and a.completed_flag = 1
+                          and date(a.first_completed_date_adj) between date('2020-12-01') and date('2021-10-27')            
+                          and a.TOTAL_REVENUE > 0
+
+                ) a
+          inner join cgan_ustax_ws.temp_mam_auth b
+          on a.auth_id = b.auth_id) c
+    left join cgan_ustax_ws.temp_ext_auth d
+    on cast(c.auth_id as varchar) = d.auth_id
+    where d.auth_id is null) m
+left join cgan_ustax_ws.temp_tax_order b
+  on cast(m.auth_id as varchar) = cast(b.auth_id as varchar)) a;
+  
+  
+  
+--------------------------------------------------------------------------------------------------------------
+--------DEDUPE
+--------------------------------------------------------------------------------------------------------------
+drop table if exists cgan_ustax_published.revenue_defer_master_ty20_official_11_final;
+create table if not exists cgan_ustax_published.revenue_defer_master_ty20_official_11_final as
+select 
+tax_year
+, batch_flag
+, auth_id
+, first_completed_date
+, first_completed_date_adj
+, first_fed_efile_attempted_date
+, first_fed_efile_attempted_date_adj
+, fnf_n_printcenter_print_date
+, fnf_n_printcenter_print_date_adj
+, ORDER_NUMBER
+, ORDER_CREATED_DATE
+, first_state1_efile_attempted_date
+, first_state1_efile_attempted_date_adj
+from (select a.*, row_number () over (partition by 
+tax_year
+, batch_flag
+, auth_id
+, first_completed_date
+, first_completed_date_adj
+, first_fed_efile_attempted_date
+, first_fed_efile_attempted_date_adj
+, fnf_n_printcenter_print_date
+, fnf_n_printcenter_print_date_adj
+, ORDER_NUMBER
+, ORDER_CREATED_DATE
+, first_state1_efile_attempted_date
+, first_state1_efile_attempted_date_adj order by tax_year) as row 
+from cgan_ustax_ws.temp_2revenue_defer_master_ty20_official_11 a) b where row = 1;
+
+--------------------------------------------------------------------------------------------------------------
+--------Batch Flag 11/1 Official Only
+--------------------------------------------------------------------------------------------------------------
+drop table if exists cgan_ustax_published.revenue_defer_master_ty20_official_11_final_only;
+create table if not exists cgan_ustax_published.revenue_defer_master_ty20_official_11_final_only as
+select 
+tax_year
+, batch_flag
+, auth_id
+, first_completed_date
+, first_completed_date_adj
+, first_fed_efile_attempted_date
+, first_fed_efile_attempted_date_adj
+, fnf_n_printcenter_print_date
+, fnf_n_printcenter_print_date_adj
+, ORDER_NUMBER
+, ORDER_CREATED_DATE
+, first_state1_efile_attempted_date
+, first_state1_efile_attempted_date_adj
+from (select a.*, row_number () over (partition by 
+tax_year
+, batch_flag
+, auth_id
+, first_completed_date
+, first_completed_date_adj
+, first_fed_efile_attempted_date
+, first_fed_efile_attempted_date_adj
+, fnf_n_printcenter_print_date
+, fnf_n_printcenter_print_date_adj
+, ORDER_NUMBER
+, ORDER_CREATED_DATE
+, first_state1_efile_attempted_date
+, first_state1_efile_attempted_date_adj order by tax_year) as row 
+from cgan_ustax_published.revenue_defer_master_ty20_official_11_final a) b 
+where row = 1
+and batch_flag = '11/1 Official';
+
+
+
+----- clean-up
+drop table if exists cgan_ustax_ws.temp_revenue_defer_print_master_auth_TY20_SEG_11_t;
+drop table if exists cgan_ustax_ws.temp_revenue_defer_print_master_t;
+drop table if exists cgan_ustax_ws.temp_1revenue_defer_master_ty20_official_11;
+drop table if exists cgan_ustax_ws.temp_2revenue_defer_master_ty20_official_11;
+drop table if exists cgan_ustax_ws.temp_mam_auth;
+drop table if exists cgan_ustax_ws.temp_ext_auth;
+drop table if exists cgan_ustax_ws.temp_print_auth;
+drop table if exists cgan_ustax_ws.temp_tax_order;
+drop table if exists cgan_ustax_ws.tmp_product_analytics_master_ytd_vw;  
