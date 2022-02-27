@@ -1,0 +1,19 @@
+select  * from tax_dm.snap_tta_metric 
+where snapshot_date = 
+(Select  max(snapshot_date) from tax_dm.snap_tta_metric 
+)
+union
+select  * from tax_dm.snap_tta_metric 
+where snapshot_date = 
+(Select max(snapshot_date) from tax_dm.snap_tta_metric
+where tax_year_key = '2021')
+union
+select  * from tax_dm.snap_tta_metric 
+where snapshot_date = 
+(Select max(snapshot_date) from tax_dm.snap_tta_metric
+where tax_year_key = '2020')
+union
+select  * from tax_dm.snap_tta_metric 
+where snapshot_date = 
+(Select max(snapshot_date) from tax_dm.snap_tta_metric
+where tax_year_key = '2019')
