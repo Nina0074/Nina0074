@@ -1,0 +1,71 @@
+-------------------------------------------------------------------------------------------------------------------------------------------------
+--customer completes ty21 as of 12/13/2021
+-------------------------------------------------------------------------------------------------------------------------------------------------
+drop table cgan_general_ws.kc_customerty21;
+create table cgan_general_ws.kc_customerty21 as
+select a.pseudonym_id, a.auth_id, a.tto_segment_hybrid_rollup, a.tax_year, a.core_flag, a.nonffa_flag, a.completed_flag, a.start_sku, a.completed_sku,  
+b.PLUS_ATTACH_FLAG, b.MAX_ATTACH_FLAG, b.PS_ATTACH_FLAG, 
+try(pp.emailaddresses[1].email) as email_address,
+(case when completed_sku = '600|Paid Deluxe' then 'Deluxe' 
+when completed_sku = '800|Paid Premier'       then 'Premier' 
+when completed_sku = '850|Paid Self Employed' then 'SelfEmployed' 
+when completed_sku = '910|Paid TTL Basic'     then 'TTLBasic'
+when completed_sku = '920|Paid TTL Deluxe'    then 'TTLDeluxe'
+when completed_sku = '930|Paid TTL Premier'   then 'TTLPremier'
+when completed_sku = '940|Paid TTL SE'        then 'TTLSelfEmployed'
+when completed_sku = '960|Paid TTLF Basic'    then 'TTLFBasic'
+when completed_sku = '965|Paid TTLF Deluxe'   then 'TTLFDeluxe'
+when completed_sku = '970|Paid TTLF Premier'  then 'TTLFPremier'
+when completed_sku = '975|Paid TTLF SE'       then 'TTLFSE'
+when completed_sku = '980|Paid TTLR Deluxe'   then 'TTLRDeluxe'
+when completed_sku = '985|Paid TTLR Premier'  then 'TTLRPremier'
+when completed_sku = '990|Paid TTLR SE'       then 'TTLRSE'
+when completed_sku = '200|Free TTO'           then 'Free' end) as ty21_completed_sku,
+(case when start_sku = '600|Paid Deluxe' then 'Deluxe' 
+when start_sku = '800|Paid Premier'       then 'Premier' 
+when start_sku = '850|Paid Self Employed' then 'SelfEmployed' 
+when start_sku = '910|Paid TTL Basic'     then 'TTLBasic'
+when start_sku = '920|Paid TTL Deluxe'    then 'TTLDeluxe'
+when start_sku = '930|Paid TTL Premier'   then 'TTLPremier'
+when start_sku = '940|Paid TTL SE'        then 'TTLSelfEmployed'
+when start_sku = '960|Paid TTLF Basic'    then 'TTLFBasic'
+when start_sku = '965|Paid TTLF Deluxe'   then 'TTLFDeluxe'
+when start_sku = '970|Paid TTLF Premier'  then 'TTLFPremier'
+when start_sku = '975|Paid TTLF SE'       then 'TTLFSE'
+when start_sku = '980|Paid TTLR Deluxe'   then 'TTLRDeluxe'
+when start_sku = '985|Paid TTLR Premier'  then 'TTLRPremier'
+when start_sku = '990|Paid TTLR SE'       then 'TTLRSE'
+when start_sku = '200|Free TTO'           then 'Free' end) as ty21_start_sku
+from (select * from dlprd.tax_rpt.product_analytics_master) as a
+inner join (select auth_id, plus_attach_flag, max_attach_flag, ps_attach_flag 
+from dlprd.tax_rpt.monetization_analytics_master
+where tax_year = 2021) as b
+on a.auth_id = b.auth_id
+inner join dlprd.intuit_identity_lifecycle_dwh.person_profile as pp
+    on a.pseudonym_id = pp.pseudonymid
+    and pp.legacyidentitytype = '0'
+    and pp.pseudonymid is not null
+    and try(pp.emailaddresses[1].email) is not null
+where tax_year = 2021 and core_flag = 1 and nonffa_flag = 1 and completed_flag = 1 and pseudonym_id is not null
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+--Remove Duplicate email addresses
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table cgan_general_ws.kc_customercountsty21;
+create table cgan_general_ws.kc_customercountsty21 as
+select * 
+from (select a.*, row_number () over (partition by email_address) as row 
+from cgan_general_ws.kc_customerty21 as a) as b
+where row = 1;
+
+
+select * from cgan_general_ws.kc_customercountsty21 limit 10
+select count(*) from cgan_general_ws.kc_customercountsty21;  --25,509
+select count(*) from cgan_general_ws.kc_customercountsty21 where plus_attach_flag = 1;  --277
+select count(*) from cgan_general_ws.kc_customercountsty21 where max_attach_flag = 1;   --381
+select count(*) from cgan_general_ws.kc_customercountsty21 where ps_attach_flag = 1;    --0
+select count(*) from cgan_general_ws.kc_customercountsty21 where plus_attach_flag = 0;  --25232
+select count(*) from cgan_general_ws.kc_customercountsty21 where max_attach_flag = 0;   --25,128
+select count(*) from cgan_general_ws.kc_customercountsty21 where ps_attach_flag = 0;    --25,509
