@@ -1,0 +1,20 @@
+--returns duplicate records for neauths in TY21, same logic can be used for starts and completes with adjustments to the metric type
+drop table if exists cgan_ustax_ws.ps_dupe_auth_investigation;
+create table cgan_ustax_ws.ps_dupe_auth_investigation
+as
+select metric_id, count(*) as num_count
+from dlprd.tax_rpt.agg_marketing_analytics agg
+where agg.ffa_timestamp is null
+and metric_type = 'neauth'
+and tax_year = '2021'
+group by 1
+having count(*) > 1
+order by 1
+;
+
+select a.*
+from dlprd.tax_rpt.agg_marketing_analytics a
+inner join cgan_ustax_ws.ps_dupe_auth_investigation b on a.metric_id = b.metric_id and a.tax_year = '2021'
+where metric_type = 'neauth'
+and a.tax_year = '2021'
+order by metric_id;
