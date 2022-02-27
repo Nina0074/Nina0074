@@ -1,0 +1,196 @@
+-- pulling core flag at primary ID level
+drop table if exists cgan_ustax_published.refunds_by_fi_c_ ; 
+create table if not exists cgan_ustax_published.refunds_by_fi_c_ as
+select distinct 
+b.tax_year
+, b.primary_id 
+, a.channel
+from tax_rpt.retention_analytics_master as a
+inner join 
+        (
+        SELECT A.CUSTOMER_KEY,
+        A.PRIMARY_ID,
+        A.SECONDARY_ID,
+        B.AUTH_ID,
+        B.PRODUCT_VERSION AS TAX_YEAR
+        FROM tax_dm.DIM_CUSTOMER as A 
+        LEFT  JOIN tax_dm.FACT_TAXORDER as B 
+        ON A.CUSTOMER_KEY = B.CUSTOMER_KEY
+        WHERE B.PRODUCT_VERSION >= 2009
+        GROUP BY A.CUSTOMER_KEY,
+        A.PRIMARY_ID,
+        A.SECONDARY_ID,
+        B.AUTH_ID,
+        B.PRODUCT_VERSION
+        )  as b
+on cast(a.customer_key as varchar)= b.customer_key
+and a.tax_year = b.tax_year 
+and a.tax_year in (2019, 2020)
+order by 2
+
+
+;
+
+----------------Good to go above this line------------------------
+
+
+
+-- ty20 data
+drop table if exists cgan_ustax_published.refunds_by_fi_r_ ; 
+create table if not exists cgan_ustax_published.refunds_by_fi_r_ as
+select
+        a.tax_year
+        , a.bank_RTN
+        , d.fi_name as FI   
+        , case when  a.filing_type in ('IRS-IIT-FILING') then 'Federal'
+                when a.filing_type  not in   ('IRS-IIT-FILING','IRS-SCORP-FILING','IRS-CORP-FILING','IRS-PARTNER-FILING') then 'State'
+                        end  as filing_type_RUP
+        , a.product_rollup
+        , cast(a.accepted_timestamp as date) as accepted_timestamp
+        , e.priority_code
+        , e.alliance_manager as channel
+        , e.channel as level1
+        , e.partner as level2
+        , e.company as partner_name
+        , c.channel as channel_group
+        , sum(a.amount) as fund_amount
+        , count(distinct a.primary_id) as filers 
+from (SELECT a.FILING_ID,
+        a.TAX_YEAR,
+        a.SEQUENCE_NUMBER,
+        a.PRIMARY_ID,
+        a.SECONDARY_ID,
+        a.TAXFILER_ID,
+        a.EFILE_PAYMENT_METHOD_ID,
+        a.BANK_PRODUCT,
+        a.AMOUNT,
+        a.FILING_TYPE_ID,
+        a.APPLICATION,
+        a.PRODUCT_ALIAS_ID,
+        a.ACCEPTED_TIMESTAMP,
+        a.ACCEPTED_TAX_DATE_ID,
+        a.BANK_RTN,
+        a.CREDIT_FOR_SALE_PRIORITY_ID,
+        --a.BATCH_EVENT_ID, ---------Batch_event_id  not coming through------
+        --a.CREATED_TIMESTAMP,
+        --a.UPDATED_TIMESTAMP,
+        a.AUTH_ID,
+        b.EFILE_PAYMENT_DESCRIPTION AS RANKED_FED_EFILE_PAYMENT_METHOD,
+        d.FILING_TYPE,
+        d.FORM_FAMILY,
+        d.DESCRIPTION,
+        e.ITEM_ALIAS_CODE,
+        f.PRODUCT_ROLLUP,
+        f.PRODUCT_EDITION_DESCRIPTION,
+        f.PRODUCT_DESCRIPTION,
+        f.PRODUCT_FAMILY_DESCRIPTION,
+        g.PRIORITY_CODE AS priority_code
+ FROM tax_dm.fact_accepted_refund a ---------Batch_event_id  not coming through------
+ LEFT  JOIN tax_dm.DIM_EFILE_PAYMENT_METHOD b 
+        ON a.EFILE_PAYMENT_METHOD_ID = b.EFILE_PAYMENT_METHOD_ID 
+ LEFT  JOIN tax_dm.DIM_FILING_TYPE d 
+        ON a.FILING_TYPE_ID = d.FILING_TYPE_ID 
+ LEFT  JOIN tax_dm.DIM_PRODUCT_ALIAS e 
+        ON a.PRODUCT_ALIAS_ID = e.PRODUCT_ALIAS_ID 
+ LEFT  JOIN tax_dm.DIM_PRODUCT f 
+        ON  e.PRODUCT_ID = f.PRODUCT_ID 
+ LEFT  JOIN tax_dm.DIM_PRIORITY_CODE g 
+        ON a.CREDIT_FOR_SALE_PRIORITY_ID = cast(g.PRIORITY_ID as varchar)
+        ) as a ------fact_accepted_refund_VW ------------------------
+left join cgan_ustax_published.fi_bank_rtn as d -- bank RTN look up table
+        on a.bank_RTN = d.rtn
+left join  cgan_ustax_published.helper_dnc_partner_codes as e -- FI p-code 
+        on a.priority_code = e.priority_code
+left join cgan_ustax_published.refunds_by_fi_c_ as c
+        on a.primary_id = c.primary_id -- core customers only
+                and a.tax_year = c.tax_year
+                
+                
+where a.tax_year = 2020
+        and a.EFILE_PAYMENT_METHOD_ID >=1 -- to get all the refund only
+        and cast(a.accepted_timestamp as date) <= cast('2021-05-17' as date) -- end of the tax week 
+group by 1,2,3,4,5,6,7,8,9,10,11,12 
+
+;
+
+
+---------------------------copy above code and just leave the where clause-------------------
+-- pulling ty19 data
+insert into cgan_ustax_published.refunds_by_fi_r_ 
+select
+        a.tax_year
+        , a.bank_RTN
+        , d.fi_name as FI   
+        , case when  a.filing_type in ('IRS-IIT-FILING') then 'Federal'
+                when a.filing_type  not in   ('IRS-IIT-FILING','IRS-SCORP-FILING','IRS-CORP-FILING','IRS-PARTNER-FILING') then 'State'
+                        end  as filing_type_RUP
+        , a.product_rollup
+        , cast(a.accepted_timestamp as date) as accepted_timestamp
+        , e.priority_code
+        , e.alliance_manager as channel
+        , e.channel as level1
+        , e.partner as level2
+        , e.company as partner_name
+        , c.channel as channel_group
+        , sum(a.amount) as fund_amount
+        , count(distinct a.primary_id) as filers 
+from (SELECT a.FILING_ID,
+        a.TAX_YEAR,
+        a.SEQUENCE_NUMBER,
+        a.PRIMARY_ID,
+        a.SECONDARY_ID,
+        a.TAXFILER_ID,
+        a.EFILE_PAYMENT_METHOD_ID,
+        a.BANK_PRODUCT,
+        a.AMOUNT,
+        a.FILING_TYPE_ID,
+        a.APPLICATION,
+        a.PRODUCT_ALIAS_ID,
+        a.ACCEPTED_TIMESTAMP,
+        a.ACCEPTED_TAX_DATE_ID,
+        a.BANK_RTN,
+        a.CREDIT_FOR_SALE_PRIORITY_ID,
+        --a.BATCH_EVENT_ID, ---------Batch_event_id  not coming through------
+        --a.CREATED_TIMESTAMP,
+        --a.UPDATED_TIMESTAMP,
+        a.AUTH_ID,
+        b.EFILE_PAYMENT_DESCRIPTION AS RANKED_FED_EFILE_PAYMENT_METHOD,
+        d.FILING_TYPE,
+        d.FORM_FAMILY,
+        d.DESCRIPTION,
+        e.ITEM_ALIAS_CODE,
+        f.PRODUCT_ROLLUP,
+        f.PRODUCT_EDITION_DESCRIPTION,
+        f.PRODUCT_DESCRIPTION,
+        f.PRODUCT_FAMILY_DESCRIPTION,
+        g.PRIORITY_CODE AS priority_code
+ FROM tax_dm.fact_accepted_refund a ---------Batch_event_id  not coming through------
+ LEFT  JOIN tax_dm.DIM_EFILE_PAYMENT_METHOD b 
+        ON a.EFILE_PAYMENT_METHOD_ID = b.EFILE_PAYMENT_METHOD_ID 
+ LEFT  JOIN tax_dm.DIM_FILING_TYPE d 
+        ON a.FILING_TYPE_ID = d.FILING_TYPE_ID 
+ LEFT  JOIN tax_dm.DIM_PRODUCT_ALIAS e 
+        ON a.PRODUCT_ALIAS_ID = e.PRODUCT_ALIAS_ID 
+ LEFT  JOIN tax_dm.DIM_PRODUCT f 
+        ON  e.PRODUCT_ID = f.PRODUCT_ID 
+ LEFT  JOIN tax_dm.DIM_PRIORITY_CODE g 
+        ON a.CREDIT_FOR_SALE_PRIORITY_ID = cast(g.PRIORITY_ID as varchar)
+        ) as a ------fact_accepted_refund_VW ------------------------
+left join cgan_ustax_published.fi_bank_rtn as d -- bank RTN look up table
+        on a.bank_RTN = d.rtn
+left join  cgan_ustax_published.helper_dnc_partner_codes as e -- FI p-code 
+        on a.priority_code = e.priority_code
+left join cgan_ustax_published.refunds_by_fi_c_ as c
+        on a.primary_id = c.primary_id -- core customers only
+                and a.tax_year = c.tax_year
+where a.tax_year = 2019
+        and a.EFILE_PAYMENT_METHOD_ID >=1 -- to get all the refund only
+        and cast(a.accepted_timestamp as date) <= cast('2020-07-31' as date) -- end of the tax week (equivalent to ty17)
+group by 1,2,3,4,5,6,7,8,9,10,11,12 ;
+
+
+
+/*
+------------------Tableau Qurey---------------------
+select * from cgan_ustax_published.refunds_by_fi_r_
+*/
