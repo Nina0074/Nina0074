@@ -1,0 +1,92 @@
+/*
+script to create cgan_ustax_published.cddl table for CD DL License dashboard.
+https://tableau.a.intuit.com/#/site/CTG/workbooks/51582/views
+with TY21 item_numbers
+*/
+drop table if exists cgan_ustax_published.cddl_ty21;
+create table if not exists cgan_ustax_published.cddl_ty21 as
+select date(activation_date at TIME ZONE 'America/Los_Angeles') as activation_date,
+    channel, 
+    retailer, 
+    edition, 
+    platform, 
+    use_count, 
+    license_code,
+    count(license_code) as activation_instance,
+    (case
+        when channel = 'Retail' and platform = 'CD'   then 'retail_cd'
+        when channel = 'Retail' and platform in ('WIN','MAC') then 'retail_cdDl'
+        when channel = 'ESD'    and platform in ('WIN','MAC') then 'retail_dl'
+        when channel = 'Direct' and platform = 'CD'           and item_number in ('5100895','5100910','5100912','5100915','5100918') then 'direct_cd'
+        when channel = 'Direct' and platform in ('WIN','MAC') and item_number in ('5100895','5100910','5100912','5100915','5100918') then 'direct_cdDl'
+        when channel = 'Direct' and platform in ('WIN','MAC') and item_number in ('5100911','5100913','5100914','5100916','5100917','5100919','5100920','5100893','5100894') then 'direct_dl'
+        when channel = 'TTA'    and platform = 'CD'           and item_number in ('5100931','5100932','5100933','5100934','5100935','5100896','5100899','5100901','5100904','5100907') then 'tta_cd'
+        when channel = 'TTA'    and platform in ('WIN','MAC') and item_number in ('5100931','5100932','5100933','5100934','5100935','5100896','5100899','5100901','5100904','5100907') then 'tta_cdDl'
+        when channel = 'TTA'    and platform in ('WIN','MAC') and item_number in ('5100897','5100898','5100900','5100902','5100903','5100905','5100906','5100908','5100909') then 'tta_dl'
+    else 'na' end) as purchased_item
+from (
+    with license_details as
+        (
+        select l.license_code,
+                l.use_count,
+                l.status as license_status,
+                lb.channel,
+                lb.retailer,
+                lb.item_number
+        from ent_icp_ep_dwh.license l
+        join ent_icp_ep_dwh.license_batch lb on lb.batch_id=l.batch_id
+        ),
+    license_entitled_product as
+        (
+        select  cep.entitled_product_id,
+                cep.license_id
+        from ent_icp_ep_dwh.commerce_entitled_product cep
+        where cep.license_id <> ''
+        ),
+    entitled_product_attribute as
+       (
+        select  entitled_product_id,
+                max(case when lower(attr_name) = 'platform' then attr_code else null end) as platform,
+                max(case when lower(attr_name) = 'version' then attr_code else null end) as version,
+                max(case when lower(attr_name) = 'edition' then attr_code else null end) as edition
+        from ent_icp_ep_dwh.commerce_entitled_product_attr
+        where lower(attr_name) in ('platform','version','edition')
+        group by entitled_product_id
+        order by entitled_product_id
+       ),
+    product_activation as
+       (
+        select epaa.attribute_value as license_id,
+                epa.activation_source,
+                epa.activation_date
+        from  ent_icp_ep_dwh.commerce_entitled_product_activation epa
+        join ent_icp_ep_dwh.commerce_entitled_product_activation_attr epaa 
+            on cast(epa.entitled_product_activation_id as varchar)=epaa.entitled_product_activation_id
+        where epaa.attribute_name='licenseID'
+      )
+select license_code,
+        use_count,
+        license_status,
+        channel,
+        retailer,
+        item_number,
+        version,
+        platform,
+        edition,
+        activation_source,
+        activation_date
+from license_entitled_product lep
+join entitled_product_attribute epa on epa.entitled_product_id=lep.entitled_product_id
+join license_details ld on lep.license_id=ld.license_code
+left join product_activation pa on pa.license_id=lep.license_id
+group by 1,2,3,4,5,6,7,8,9,10,11
+)
+where license_status = 'ACTIVE'
+and version = '2021'
+and activation_source = 'ICP_TTD_US'
+and channel <> 'NFR'
+and lower(retailer) not like '%testing%qa%'
+group by 1,2,3,4,5,6,7,9
+;
+
+--select count(*) from cgan_ustax_published.cddl_ty21;
