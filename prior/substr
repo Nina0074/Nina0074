@@ -1,0 +1,4 @@
+select PRIMARY_FILER_ID  , sender_id as auth_id 
+ from CTG_ANALYTICS_SRC.TRN_EFS_FILING 
+where substr(period,1,6) ='Y:2015'
+      and app ='TURBOTAX-ONLINE'
