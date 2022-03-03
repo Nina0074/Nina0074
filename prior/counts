@@ -1,0 +1,167 @@
+SELECT COUNT(distinct filer_id) FROM CTG_ANALYTICS_WS.AW_CAT_AGG_TY15_20160419 
+where HOMEOWNER =1 
+ 
+and filer_id in
+(select distinct filer_id from CTG_ANALYTICS_WS.CAT_AGG_TY14_AW 
+where (HOMEOWNER is null or HOMEOWNER =0))
+
+
+select tax_year, count(*),count(distinct PRIMARY_ID)  from CTG_ANALYTICS.AGG_FED_EFILE_STATUS 
+group by 1;
+
+select fed_or_state, count (distinct filer_id) from secure_ws. test group by 1;
+
+select count(order_number) from ctg_analytics.fact_taxorder
+where order_number like 'EFE%'
+
+select tax_year, count(distinct primary_id) from CTG_ANALYTICS.FACT_ACCEPTED_REFUND
+group by 1;
+
+select count(*), count(distinct filer_id), count(distinct auth_id) from CAT_DWH.SUBMISSION_META_DATA;
+
+select lower (occupation_taxpayer), count(*) from OMT_CTG_WS.USER_TAX_PROFILE_DEV_TY12 group by 1 order by 2 desc
+
+
+select count(distinct b.primary_id) 
+from SECURE_WS.kcpin_HASH a
+left join ctg_analytics_src.dim_customer_hash as b 
+on a.filer_id = b.primary_id
+
+
+
+select count(distinct b.primary_id) 
+from SECURE_WS.kcpin_HASH a
+left join (select * from ctg_analytics_src.dim_customer_hash where date(created_timestamp) <= '8/23/18') as b 
+on a.filer_id = b.primary_id
+
+
+SELECT
+COUNT(DISTINCT a.AUTH_ID)
+FROM CTG_ANALYTICS_WS.AM_POSTCARD_SCHEDULES_AUTH_MASTER_CAT_TY17 a
+INNER JOIN CTG_ANALYST_LAYER.PRODUCT_ANALYTICS_MASTER_YTD pam on a.AUTH_ID = pam.AUTH_ID and pam.TAX_YEAR = 2017
+WHERE PAM.TAX_YEAR = 2017
+AND PAM.COMPLETED_FLAG = 1
+AND ISNULL(a.NOT_POSTCARD_FILED_IN_FREE,0) > 0
+;
+
+select cnt, count(*) as customers
+from 
+(select mark_Cust_iden, count(*) as cnt
+from yourtablename
+group by mark_Cust_iden
+) as a
+group by cnt;
+
+
+SELECT
+COUNT(DISTINCT pam.auth_id) AS auth_cnt
+,CASE WHEN pam.completed_sku IS NOT NULL THEN 'completed' ELSE 'not completed' END AS group
+-- auth_id,first_completed_date, EXTENSION_DATE,pam.completed_flag--,*
+FROM
+ctg_analyst_layer.customer_extension_filings        cf
+JOIN tax_rpt.product_analytics_master_vw     pam ON cf.SENDER_ID = pam.auth_id
+AND cf.tax_year = pam.tax_year
+--         AND (pam.completed_sku ILIKE        '%TTL%' OR pam.start_sku ILIKE      '%TTL%') ----- DIWM
+AND (pam.completed_sku NOT ILIKE    '%TTL%' OR pam.start_sku NOT ILIKE  '%TTL%') ----- DIY
+--AND (pam.first_completed_date < cf.EXTENSION_DATE)
+WHERE
+cf.TAX_YEAR = 2020
+GROUP BY
+2
+
+
+
+
+
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+--How many military paid nothing in TY15 (military based in price priority code)
+
+select count(distinct a.auth_id) as All_Core_Military, count (distinct case when d.total_revenue = 0.00 then a.auth_id else null end) as Military_Paid_Nothing
+from ctg_analytics_ws.product_analytics_master_ytd a
+inner join 
+                (Select customer_key, x.auth_id, ORDER_TIMESTAMP, y.PRIORITY_CODE as price_priority_code
+                 from CTG_ANALYTICS.SUB_TAXORDER_RANKED as x 
+                 left join CTG_ANALYTICS.DIM_PRIORITY_CODE as y on x.price_PRIORITY_ID = y.PRIORITY_ID
+                 where x.tax_year =2015  )as ranked on a.auth_id = ranked.auth_id
+left join   
+        (select * from CTG_ANALYTICS.AGG_CUSTOMER_REVENUE where tax_year=2015) as d on a.auth_id =d.auth_id
+where core_flag = 1
+and nonffa_flag = 1
+and ranked.price_priority_code in (
+                '1918800000',
+                '1918700000',
+                '3468350670',
+                '3468350671',
+                '5610400000',
+                '3468350672',
+                '3468350673',
+                '3468350810',
+                '3468350811',
+                '3468350674',
+                '3468350675',
+                '3468350868',
+                '3468350869',
+                '3468350872',
+                '3468350873',
+                '5556800000',
+                '5556900000',
+                '3468350920',
+                '3468350921',
+                '3468350924',
+                '3468350925',
+                '3468350688',
+                '3468350689',
+                '1920800000',
+                '1920700000',
+                '1920000000',
+                '1919900000',
+                '1922700000',
+                '1922600000',
+                '1923700000',
+                '1923600000',
+                '1924400000',
+                '1925800000',
+                '1925400000',
+                '1924800000',
+                '3468350916',
+                '3468350917',
+                '1931200000',
+                '1931800000',
+                '1931100000',
+                '1932000000',
+                '1928400000',
+                '1927900000',
+                '1931300000',
+                '1926600000',
+                '1928600000',
+                '1931600000',
+                '1934600000',
+                '1934800000',
+                '1936800000',
+                '1939800000',
+                '1940300000',
+                '1939300000',
+                '1940400000',
+                '1940700000',
+                '1936400000',
+                '1933300000',
+                '1939900000',
+                '1933700000',
+                '1945200000',
+                '1945100000',
+                '1946200000',
+                '1946100000',
+                '1948600000',
+                '1948500000',
+                '1950800000',
+                '1950700000',
+                '1949900000',
+                '1949800000',
+                '1951800000',
+                '1951700000',
+                '1917900000',
+                '1917800000',
+                '5589500000',
+                '5589600000')
+;
