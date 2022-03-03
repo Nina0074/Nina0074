@@ -1,0 +1,45 @@
+SELECT
+CASE WHEN pam.completed_sku IS NOT NULL THEN 'completed' ELSE 'not completed' END AS group, 
+CASE WHEN (cf.TAX_YEAR = 2020) THEN 'TY 20' WHEN (cf.TAX_YEAR = 2019) THEN 'TY 19' ELSE 'TY 18' END AS Tax_Year, 
+COUNT(DISTINCT pam.auth_id) AS auth_cnt
+FROM
+        ctg_analyst_layer.customer_extension_filings cf
+        JOIN tax_rpt.product_analytics_master_vw pam ON cf.SENDER_ID = pam.auth_id
+        AND cf.tax_year = pam.tax_year
+WHERE
+       (cf.TAX_YEAR = 2020) or (cf.TAX_YEAR = 2019) 
+GROUP BY 1,2;
+
+
+
+create table secure_ws.kcdtbal_format as
+select primary_id, customer_key, date(order_timestamp) as order_date, date(accepted_timestamp) as accepted_date, efile_payment_method_id,
+(case when efile_payment_method_id in ('-5','-3','-2') then 'balance due'
+      when efile_payment_method_id in ('1','2','3','4','8') then 'refund'
+else 'na' end) as 'bal_refund'     
+from secure_ws.kcdtbal;
+
+
+
+select * from ctg_analyst_layer.AGG_MARKETING_ANALYTICS where metric_type = 'start' and tax_year = 2018 
+
+select date, sum(case when metric_type = 'start' then 1 else 0 end) as STARTS
+from ctg_analyst_layer.AGG_MARKETING_ANALYTICS where metric_type = 'start' and tax_year = 2018
+and channel_group = 'FI Channel' group by 1;
+
+
+
+
+select 
+a.*
+,case when b.auth_id is not null then 1 else 0 end as TY16_enter_state_product_flag
+from ctg_analytics_ws.kc37405nost a
+left join
+        (
+        select
+        distinct 
+        '2016' as tax_year
+        ,auth_id 
+        from OMT_CTG_DWH_DEV.TRANS_CLICKSTREAM_CTG_TY16
+        where left(prop19,5) = 'S2016'
+        ) b on a.auth_id = b.auth_id and a.tax_year = b.tax_year
