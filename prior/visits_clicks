@@ -1,0 +1,25 @@
+Here's my query (I did page_url like):
+select date(from_unixtime(hit_time_gmt) AT TIME ZONE 'America/Los_Angeles') as hit_time_pst,count(distinct visitor_session_id) as visits,count(distinct ivid) as visitors 
+from dlprd.tax_src.fact_clickstream_psd
+where tax_year='2021' and page_url like 'https://turbotax.intuit.com/lp/aff/wuspanish/?priorityCode=5760500000&cid=all_wuspanish-emjan_aff_5760500000%'
+group by 1
+order by 1;
+
+This gets total visits to the page.
+
+Then to get clicks I did this:
+select date(from_unixtime(hit_time_gmt) AT TIME ZONE 'America/Los_Angeles') as hit_time_pst,count(distinct visitor_session_id) as visits,
+    count(distinct case when ui_action = 'clicked' then visitor_session_id else null end) as click_visits
+from dlprd.tax_src.fact_clickstream_psd
+where tax_year='2021' and page_url like 'https://turbotax.intuit.com/lp/aff/wuspanish/?priorityCode=5760500000&cid=all_wuspanish-emjan_aff_5760500000%'
+group by 1
+order by 1;
+
+So a total of 67 visits to the page and of those, 16 visits clicked on a link which implies abandonment rate is 76%
+
+Then to see what they clicked on you can run this:
+select ui_action,ui_object_detail,count(distinct visitor_session_id) as visits
+from dlprd.tax_src.fact_clickstream_psd
+where tax_year='2021' and page_url like 'https://turbotax.intuit.com/lp/aff/wuspanish/?priorityCode=5760500000&cid=all_wuspanish-emjan_aff_5760500000%'
+   and ui_action = 'clicked'
+group by 1,2;
