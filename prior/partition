@@ -1,0 +1,51 @@
+drop table secure_ws.kcYear2MigrationDT2019;
+create table secure_ws.kcYear2MigrationDT2019 as
+select * from (
+select a.*, b.auth_id, b.mark_cust_iden, b.item_ver_cd as ty19item_ver_cd, b.seg_group as ty19seg_group, b.basic_seg_type as ty19basic_seg_type, 
+b.item_dsc as ty19item_dsc, b.orign_oe_order_id as ty19orign_oe_order_id, 
+b.prod_edtn_short_nam as ty19prod_edtn_short_nam, row_number () over (partition by b.mark_cust_iden) as row
+from secure_ws.kcYear2MigrationDT_mci as a inner join (select * from CONSUMER_DM.v_dim_marketing_taxcust_profile_list
+where item_ver_cd = 2019 and completed_ind = 1 and list_number is not null) as b
+on a.mark_cust_iden_adj = b.mark_cust_iden) as c
+where row = 1;
+
+
+
+
+--DEDUPE
+create table secure_ws.kcacceptdedupe as
+select * 
+from (select a.*, row_number () over (partition by submission_id) as row from secure_ws.kcaccept1 as a) as b where row = 1
+
+Dedupe secure_ws.kcaccept1 from 11k to 10k
+
+create table secure_ws.kcrtrefundcat as 
+select * from (
+select a.*, b.product_code, b.refund_amount, b.filing_type, row_number () over (partition by primary_id) as row
+from secure_ws.kcrtrefund1 as a left join (select * from cat_dwh.submission_meta_data 
+where period = '2017') as b
+on a.primary_id = filer_id) as z
+where row = 1;
+
+
+
+create table secure_ws.kcrtrefundstate as
+select * from (
+select a.*, c.PRODUCT_DESCRIPTION, c.PRODUCT_EDITION_DESCRIPTION, d.billing_state_code, row_number () over (partition by a.primary_id) as row1
+from secure_ws.kcrtrefundcat as a 
+left join ctg_analytics.dim_product_alias as b on b.item_alias_code = a.product_code 
+left join ctg_analytics.dim_product as c on c.product_id = b.product_id
+left join (select * from ctg_analytics.dim_primary_filer_location
+where tax_year = 2017) as d on a.primary_id = d.primary_id) as z
+where row1 = 1;
+
+
+	create table CTG_ANALYTICS_WS.W2_edits_new as /*+ direct */   --please add this direct section, it will make the data movement faster in Vertica
+	select * from CTG_ANALYTICS_WS.W2_edits
+	order by request_uuid, auth_id  ---partitioned by columns you use often
+	segmented by hash(request_uuid, auth_id ) all nodes; --segmented by columns you join to other tables
+	 
+	drop table  CTG_ANALYTICS_WS.W2_edits;
+	 
+	alter table CTG_ANALYTICS_WS.W2_edits_new rename to W2_edits;
+ 
