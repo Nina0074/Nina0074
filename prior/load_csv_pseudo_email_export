@@ -1,0 +1,338 @@
+-- Example below load CSV data containing a header row (skip first line)
+drop table cgan_ustax_ws.mr2881;
+CREATE EXTERNAL TABLE cgan_ustax_ws.mr2881 (
+  auth_id string,
+  recipe string,
+  retained_w1 string,
+  first_assignment_date date
+)
+ROW FORMAT DELIMITED
+  FIELDS TERMINATED BY ','
+STORED AS
+INPUTFORMAT
+  'org.apache.hadoop.mapred.TextInputFormat'
+OUTPUTFORMAT
+  'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+LOCATION
+  's3://idl-cgan-ustax-processing-cgan-prd/analyst_data/mr2881/'     ---UPDATE FILE NAME
+TBLPROPERTIES (
+  's3select.format'='csv',
+  'has_encrypted_data'='false');
+  
+--  'skip.header.line.count'='1');
+
+select * from cgan_ustax_ws.mr2881
+
+---------------------------------------------------------------------------------------------------------------------------
+--get pseudonym_id
+---------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881a;
+create table analyst_ws.kc2881a as
+select a.*
+, b.pseudonymid as pseudonym_id
+from cgan_ustax_ws.mr2881 a
+left join dlprd.intuit_identity_lifecycle_dwh.person_profile b
+on a.auth_id = b.accountid and b.legacyidentitytype <> '2';
+
+select * from analyst_ws.kc2881a
+describe analyst_ws.kc2881a
+
+
+---------------------------------------------------------------------------------------------------------------------------
+--get email
+---------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881b;
+create table analyst_ws.kc2881b as
+select
+  a.auth_id,
+  a.recipe,
+  a.retained_w1,
+  a.first_assignment_date,
+  a.pseudonym_id,
+  pp.emailaddresses[1].email as email_address
+from (select * from analyst_ws.kc2881a) as a
+left join dlprd.intuit_identity_lifecycle_dwh.person_profile as pp
+    on a.pseudonym_id = pp.pseudonymid
+    and pp.legacyidentitytype = '0'
+group by 1,2,3,4,5,6; 
+
+select * from analyst_ws.kc2881b;
+
+
+---------------------------------------------------------------------------------------------------------------------------
+--get pii  But the bigger table first to optimize otherwise it times out
+---------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881c;
+create table analyst_ws.kc2881c as
+select distinct b.auth_id,
+b.recipe,
+b.retained_w1,
+b.first_assignment_date,
+b.pseudonym_id,
+b.email_address, 
+a.lower_email as cv_email,
+a.marketing_customer_id,
+a.customer_first_name,
+a.customer_last_name,
+a.address_line_1,
+a.city_name,
+a.state_code,
+a.us_zip_code
+from dlprd.tax_dm.helper_cv_get_pii as a 
+inner join analyst_ws.kc2881b as b             
+on a.auth_id = cast(b.auth_id as bigint);
+
+select * from analyst_ws.kc2881c;
+describe analyst_ws.kc2881c;
+
+---------------------------------------------------------------------------------------------------------------------------
+--decrypt pii  RUN IN PYCHARM
+---------------------------------------------------------------------------------------------------------------------------  
+/*
+drop table analyst_ws.kc2881d;
+create table analyst_ws.kc2881d as
+USING EXTERNAL FUNCTION decrypt(input VARCHAR) RETURNS VARCHAR LAMBDA 'dse-lambda-athena'
+select 
+auth_id,
+recipe,
+retained_w1,
+first_assignment_date,
+pseudonym_id,
+email_address, 
+lower_email as cv_email,
+marketing_customer_id,
+decrypt(customer_first_name),
+decrypt(customer_last_name),
+decrypt(address_line_1)
+city_name,
+state_code,
+us_zip_code
+from analyst_ws.kc2881c;                   
+
+---create empty table
+drop table cgan_ustax_ws.kc2881d;
+CREATE TABLE cgan_ustax_ws.kc2881d (
+auth_id             	string,              	                    
+recipe              	string,             	                    
+retained_w1         	string,              	                    
+first_assignment_date	date,                	                    
+pseudonym_id        	string,              	                    
+email_address       	string,              	                    
+cv_email            	string,              	                    
+marketing_customer_id	int,                 	                    
+customer_first_name 	string,              	                    
+customer_last_name  	string,              	                    
+address_line_1      	string,              	                    
+city_name           	string,              	                    
+state_code          	string,              	                    
+us_zip_code         	string              	                    
+)
+stored as parquet
+LOCATION
+  's3://idl-cgan-ustax-processing-cgan-prd/analyst_data/kc2881c/';     ---UPDATE FILE NAME
+
+select * from cgan_ustax_ws.kc2881d  
+
+
+--insert and decrypt
+
+insert into cgan_ustax_ws.kc2881d 
+USING EXTERNAL FUNCTION decrypt(input VARCHAR) RETURNS VARCHAR LAMBDA 'dse-lambda-athena'
+select 
+auth_id,
+recipe,
+retained_w1,
+first_assignment_date,
+pseudonym_id,
+email_address, 
+cv_email,
+marketing_customer_id,
+decrypt(customer_first_name),
+decrypt(customer_last_name),
+decrypt(address_line_1)
+city_name,
+state_code,
+us_zip_code
+from analyst_ws.kc2881c;   */
+
+
+
+
+
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--REMOVE Authenticate email address
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881authenticate;
+create table analyst_ws.kc2881authenticate as
+select auth_id, recipe, retained_w1, first_assignment_date, pseudonym_id, email_address, cv_email, marketing_customer_id, 
+customer_first_name, customer_last_name, address_line_1, city_name, state_code, us_zip_code
+from analyst_ws.kc2881c where email_address not like 'authenticate%';
+
+select count(*) from analyst_ws.kc2881authenticate;  --893
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+-- EMAIL SUPPRESSIONS - Deceased
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881emsupp;
+create table analyst_ws.kc2881emsupp as
+select a.*, lower_email 
+from analyst_ws.kc2881authenticate as a left join dlprd.cgan_ustax_sec_published.ty21_dt_experian_deceased_flag as b
+on a.email_address = b.lower_email;
+ 
+select * from analyst_ws.kc2881emsupp; 
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--MERGE authenticate and supp
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881suppdrop;
+create table analyst_ws.kc2881suppdrop as
+select a.*, b.lower_email 
+from analyst_ws.kc2881authenticate as a left join analyst_ws.kc2881emsupp as b
+on a.email_address = b.lower_email;
+
+select count(*) from analyst_ws.kc2881suppdrop where lower_email is not null; --0
+select count(*) from analyst_ws.kc2881suppdrop where lower_email is null;     --893
+select * from analyst_ws.kc2881suppdrop limit 10;
+select count(*) from analyst_ws.kc2881suppdrop;                               --893
+select count(distinct marketing_customer_id) from analyst_ws.kc2881suppdrop;  --887
+select count(distinct email_address) from analyst_ws.kc2881suppdrop;          --832
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--REMOVE SUPPRESSIONS
+--SELECT LOWER_EMAIL NULL
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881suppdropa;
+create table analyst_ws.kc2881suppdropa as
+select *
+from analyst_ws.kc2881suppdrop where lower_email is null;
+
+select count(*) from analyst_ws.kc2881suppdropa where lower_email is not null;   --0
+select count(*) from analyst_ws.kc2881suppdropa where lower_email is null;       --893
+select * from analyst_ws.kc2881suppdropa limit 10;
+select count(*) from analyst_ws.kc2881suppdropa;                                 --893
+select count(distinct marketing_customer_id) from analyst_ws.kc2881suppdropa;    --887
+select count(distinct email_address) from analyst_ws.kc2881suppdropa;            --832
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------
+-- GPC USED 10/20/2021
+------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881_gpc;
+create table analyst_ws.kc2881_gpc as
+select * from analyst_ws.kc2881suppdropa d
+left join (select
+distinct ownerid, consented 
+from dlprd.ent_cv_dwh.dim_oii_privacy
+where ownertype = 'EMAIL'
+and purpose in ('/marketing-notifications/*', '/marketing-notifications/research-USTT')
+and consenttype = 'marketing-preferences'
+and productregion = 'US'
+and applicationid in ('3748138382259460994', '8431881994700604519')
+and consented = false) v
+on d.email_address = v.ownerid;
+
+select * from analyst_ws.kc2881_gpc limit 10;
+select count(*) from analyst_ws.kc2881_gpc;                                                      --893
+select count(distinct marketing_customer_id) from analyst_ws.kc2881_gpc where consented is null; --807
+select count(distinct marketing_customer_id) from analyst_ws.kc2881_gpc where consented = false; --80
+select count(distinct email_address) from analyst_ws.kc2881_gpc where consented is null;         --766
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--REMOVE OPT OUTS  - EMAIL OPT OUTS
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881_scrubbed;
+create table analyst_ws.kc2881_scrubbed as
+select * from analyst_ws.kc2881_gpc where consented is null;
+
+select * from analyst_ws.kc2881_scrubbed limit 10;
+select count(*) from analyst_ws.kc2881_scrubbed;                                  --813
+select count(distinct marketing_customer_id) from analyst_ws.kc2881_scrubbed;     --807
+select count(distinct email_address) from analyst_ws.kc2881_scrubbed;             --766
+
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+-- LIST CV AND MATT EMAIL MATCH
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881_cvmatch;
+create table analyst_ws.kc2881_cvmatch as
+select *
+--, case when email_address = cv_email then 1 else 0 end as EM_Match
+from analyst_ws.kc2881_scrubbed
+where email_address = cv_email;
+
+select count(*) from analyst_ws.kc2881_cvmatch;                      --758
+select count(distinct email_address) from analyst_ws.kc2881_cvmatch; --719
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--DEDUPE BY EMAIL ADDRESS 
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+drop table analyst_ws.kc2881dedupe;
+create table analyst_ws.kc2881dedupe as
+select auth_id, recipe, retained_w1, first_assignment_date, pseudonym_id, email_address, cv_email, marketing_customer_id, 
+customer_first_name, customer_last_name, address_line_1, city_name, state_code, us_zip_code
+from (select a.*, row_number () over (partition by email_address) as row from analyst_ws.kc2881_cvmatch as a) as b where row = 1;
+
+select * from analyst_ws.kc2881dedupe  limit 10;
+select count(*) from analyst_ws.kc2881dedupe                              --719
+select count(distinct marketing_customer_id) from analyst_ws.kc2881dedupe --719
+select count(distinct email_address) from analyst_ws.kc2881dedupe         --719
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+--DEDUPE BY EMAIL ADDRESS 
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------------------
+--decrypt pii  RUN IN PYCHARM
+---------------------------------------------------------------------------------------------------------------------------  
+USING EXTERNAL FUNCTION decrypt(input VARCHAR) RETURNS VARCHAR LAMBDA 'dse-lambda-athena'
+select 
+auth_id,
+recipe,
+retained_w1,
+first_assignment_date,
+pseudonym_id,
+email_address, 
+marketing_customer_id,
+decrypt(customer_first_name) as customer_first_name,
+decrypt(customer_last_name) as customer_last_name,
+decrypt(address_line_1) as address,
+city_name,
+state_code,
+us_zip_code
+from analyst_ws.kc2881dedupe;   
+
+
+
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------
+--export file
+---------------------------------------------------------------------------------------------------------------------------------------------
+@export ON;
+@export SET Format="CSV"
+CsvColumnDelimiter=","
+CsvRowDelimiter="\r\n";               
+
+     --actives        
+     @export set filename = "C:\Users\kcornejo\Box\a Market Research\TY20\2180 Retail Study PHONE & EMAL Stephanie Li\2180_output_addtl.csv";
+     select * from analyst_ws.kc2081finalv1;
+
+@export off;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
