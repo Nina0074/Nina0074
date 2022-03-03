@@ -1,0 +1,60 @@
+Timezone
+
+
+select date(date AT TIME ZONE 'America/Los_Angeles'),count(distinct metric_id)
+from dlprd.tax_rpt.agg_marketing_analytics
+where tax_year='2021' and metric_type='session' and date(date AT TIME ZONE 'America/Los_Angeles')=date('2022-01-26')
+group by 1
+
+
+select distinct d.pseudonym_id.auth_id
+from dlprd.tax_rpt.product_analytics_master a
+left outer join analyst_ws.sub_auth_credit_campaign_global_3hrs b
+on cast(a.auth_id as varchar) = b.pseudonym_id.auth_id and cast(a.tax_year as varchar)=b.tax_year
+left outer join dlprd.tax_src.dim_campaign_global c
+on b.last_campaign.id = c.id
+left outer join dlprd.tax_src.sub_auth_credit_campaign_global d
+on cast(a.auth_id as varchar) = d.pseudonym_id.auth_id and cast(a.tax_year as varchar)=d.tax_year
+left outer join dlprd.tax_src.dim_campaign_global e
+on d.last_campaign.id = e.id
+where a.tax_year=2021
+and date(a.first_neauth_date at time zone 'America/Los_Angeles') <= date('2022-01-25')
+and b.pseudonym_id.auth_id is null
+
+—------------------------------------------------------------------------------------------------------------Agg Marketing
+select 
+agg.tax_year
+, agg.channel_group
+, date(AGG.DATE at time zone 'America/Los_Angeles') as reporting_date
+, sum(case when metric_type = 'session' then 1 else 0 end) as sessions
+, sum(case when metric_type = 'traffic' then 1 else 0 end) as traffic
+, count(distinct case when agg.metric_type = 'neauth' then metric_id end) as neauths
+, count(distinct case when agg.metric_type = 'start' then metric_id end) as starts
+, count(distinct case when agg.metric_type = 'complete' then metric_id end) as completes
+from dlprd.tax_rpt.agg_marketing_analytics agg
+inner join dlprd.cgan_ustax_ws.marketing_analytics_td td on date(case when agg.tax_year = '2019' then agg.date else agg.date AT TIME ZONE 'America/Los_Angeles' end) = date(td.tax_date)
+where agg.tax_year = '2021'
+and td.reporting_date <= date('2022-01-20')
+and (agg.post_complete_session_flag = false or agg.post_complete_session_flag is null)
+group by 1,2,3
+order by 1,2,3
+ 
+
+--PAM
+select 
+pam.tax_year
+, pam.channel_group
+, date(pam.first_neauth_date at time zone 'America/Los_Angeles') as date
+, count(distinct pam.auth_id) as neauths
+from dlprd.tax_rpt.product_analytics_master pam
+where pam.tax_year = 2021
+and date(pam.first_neauth_date at time zone 'America/Los_Angeles') <= date('2022-01-20')
+and pam.first_neauth_date is not null
+group by 1,2,3
+order by 1,2,3
+
+
+Regina McClelland  1 day ago
+@cfollmer & @kcornejo: with the timestamps (without timezones) and converting to PST... Craig: doing an add of 7 hours doesn't work half the year due to daylight savings?
+Here is an alternate that worked for me:
+select from_unixtime(to_unixtime(request_timestamp), 'America/Los_Angeles') ...
